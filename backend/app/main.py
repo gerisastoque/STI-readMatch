@@ -251,32 +251,87 @@ async def telegram_webhook(request: Request) -> dict:
 
     message: dict = data.get("message") or {}
     chat_id = (message.get("chat") or {}).get("id")
+    from_id = (message.get("from") or {}).get("id")
     text: str = (message.get("text") or "").strip()
 
     if not chat_id or not text:
         return {"ok": True}
 
-    if text == "/recomendar" or text.startswith("/recomendar "):
-        repo = get_repository()
-        group = repo.fetch_group_by_telegram_chat(str(chat_id))
+    repo = get_repository()
 
-        if not group:
+    if text == "/recomendar" or text.startswith("/recomendar "):
+        # Buscar si este usuario de Telegram está vinculado a ReadMatch
+        result = repo.client.table("telegram_users")\
+            .select("user_id")\
+            .eq("telegram_user_id", from_id)\
+            .limit(1)\
+            .execute()
+
+        if not result.data:
             await _send_telegram_message(
                 chat_id,
-                "Este grupo no está conectado a ReadMatch. Conéctalo desde la app en Ajustes del grupo."
+                "No estás vinculado a ReadMatch todavía.\n\nEscribe:\n/vincular TU_EMAIL_DE_READMATCH\n\nEjemplo:\n/vincular laura@gmail.com"
             )
-        else:
-            recs = repo.fetch_group_recommendations(group["id"])
+            return {"ok": True}
+
+        user_id = result.data[0]["user_id"]
+
+        # Buscar todos los grupos donde es miembro
+        grupos_result = repo.client.table("group_members")\
+            .select("group_id, recommendation_groups(group_name)")\
+            .eq("user_id", user_id)\
+            .execute()
+
+        if not grupos_result.data:
+            await _send_telegram_message(chat_id, "No perteneces a ningún grupo en ReadMatch.")
+            return {"ok": True}
+
+        lines = ["📚 Recomendaciones de tus grupos en ReadMatch:\n"]
+        for item in grupos_result.data:
+            group_id = item["group_id"]
+            group_name = (item.get("recommendation_groups") or {}).get("group_name", "Sin nombre")
+
+            recs = repo.fetch_group_recommendations(group_id)
             if not recs:
-                await _send_telegram_message(chat_id, "Aún no hay recomendaciones para este grupo.")
+                lines.append(f"*{group_name}*: sin recomendaciones aún.")
             else:
-                lines = [f"📚 Top picks para {group['group_name']}:"]
+                lines.append(f"📖 *{group_name}*:")
                 for rec in recs[:3]:
                     book = rec.get("books") or {}
                     title = book.get("nombre_libro", "Sin título")
                     score = round(float(rec.get("final_score", 0)) * 100)
-                    lines.append(f"{rec.get('rank')}. {title} · {score}%")
-                await _send_telegram_message(chat_id, "\n".join(lines))
+                    lines.append(f"  {rec.get('rank')}. {title} · {score}%")
+            lines.append("")
+
+        await _send_telegram_message(chat_id, "\n".join(lines))
+
+    elif text.startswith("/vincular "):
+        email = text.replace("/vincular ", "").strip()
+
+        # Buscar el usuario por email en Supabase
+        user_result = repo.client.table("user_preferences")\
+            .select("user_id")\
+            .limit(1)\
+            .execute()
+
+        # Buscar en auth.users por email
+        try:
+            auth_result = repo.client.auth.admin.list_users()
+            user = next((u for u in auth_result if u.email == email), None)
+        except Exception:
+            user = None
+
+        if not user:
+            await _send_telegram_message(chat_id, f"No encontré ninguna cuenta con el email {email}. Verifica que sea el mismo que usas en ReadMatch.")
+            return {"ok": True}
+
+        # Guardar la vinculación
+        repo.client.table("telegram_users").upsert({
+            "telegram_user_id": from_id,
+            "user_id": str(user.id)
+        }).execute()
+
+        await _send_telegram_message(chat_id, f"✅ Vinculado correctamente. Ahora escribe /recomendar para ver tus picks.")
 
     elif text == "/perfil":
         await _send_telegram_message(
@@ -285,10 +340,3 @@ async def telegram_webhook(request: Request) -> dict:
         )
 
     return {"ok": True}
-
-
-async def _send_telegram_message(chat_id: int, text: str) -> None:
-    token = os.getenv("TELEGRAM_BOT_TOKEN", "")
-    url = f"https://api.telegram.org/bot{token}/sendMessage"
-    async with httpx.AsyncClient() as client:
-        await client.post(url, json={"chat_id": chat_id, "text": text})
