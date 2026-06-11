@@ -268,11 +268,11 @@ async def telegram_webhook(request: Request) -> dict:
             .execute()
 
         if not result.data:
-            await _send_telegram_message(
-                chat_id,
-                "No estás vinculado a ReadMatch todavía.\n\nEscribe:\n/vincular TU_EMAIL_DE_READMATCH\n\nEjemplo:\n/vincular laura@gmail.com"
-            )
-            return {"ok": True}
+         async def _send_telegram_message(chat_id: int, text: str) -> None:
+    token = os.getenv("TELEGRAM_BOT_TOKEN", "")
+    url = f"https://api.telegram.org/bot{token}/sendMessage"
+    async with httpx.AsyncClient() as client:
+        await client.post(url, json={"chat_id": chat_id, "text": text})
 
         user_id = result.data[0]["user_id"]
 
