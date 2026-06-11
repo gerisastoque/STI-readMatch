@@ -133,17 +133,17 @@ class SupabaseRepository:
         except Exception as exc:
             self._raise_supabase_error("update_group_telegram_chat", exc)
 
-            def fetch_group_by_telegram_chat(self, chat_id: str) -> dict[str, Any] | None:
-    try:
-        response = (
-            self.client.table("recommendation_groups")
-            .select("*")
-            .eq("telegram_chat_id", chat_id)
-            .limit(1)
-            .execute()
-        )
-        data = response.data or []
-        return data[0] if data else None
-    except Exception as exc:
-        self._raise_supabase_error("fetch_group_by_telegram_chat", exc)
-        return None
+    def fetch_group_by_telegram_chat(self, chat_id: str) -> dict[str, Any] | None:
+        try:
+            response = (
+                self.client.table("recommendation_groups")
+                .select("*")
+                .eq("telegram_chat_id", chat_id)
+                .limit(1)
+                .execute()
+            )
+            data = response.data or []
+            return data[0] if data else None
+        except Exception as exc:
+            self._raise_supabase_error("fetch_group_by_telegram_chat", exc)
+            return None
